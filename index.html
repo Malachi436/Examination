@@ -16,6 +16,8 @@
     <div id="instructions">
         <b>Virtual Villa Controls:</b><br>
         WASD - Move around<br>
+        Space - Fly up<br>
+        Shift - Fly down<br>
         Mouse - Look around<br>
         Click to enable controls<br><br>
         <b>Features:</b><br>
@@ -46,6 +48,53 @@
             },
             tick: function(time, timeDelta) {
                 this.el.object3D.rotation.y += this.data.speed * timeDelta / 1000;
+            }
+        });
+
+        // Fly controls for vertical movement (Space=up, Shift=down)
+        AFRAME.registerComponent('fly-controls', {
+            schema: {
+                speed: {default: 0.15}
+            },
+            init: function() {
+                this.keys = {};
+                this.bindFunctions();
+            },
+            bindFunctions: function() {
+                this.onKeyDown = this.onKeyDown.bind(this);
+                this.onKeyUp = this.onKeyUp.bind(this);
+            },
+            update: function() {
+                if (this.data.enabled) {
+                    window.addEventListener('keydown', this.onKeyDown);
+                    window.addEventListener('keyup', this.onKeyUp);
+                } else {
+                    window.removeEventListener('keydown', this.onKeyDown);
+                    window.removeEventListener('keyup', this.onKeyUp);
+                }
+            },
+            onKeyDown: function(e) {
+                this.keys[e.code] = true;
+            },
+            onKeyUp: function(e) {
+                this.keys[e.code] = false;
+            },
+            tick: function(time, delta) {
+                if (!delta) return;
+                var rig = this.el;
+                var pos = rig.object3D.position;
+                var speed = this.data.speed * delta / 1000;
+
+                if (this.keys['Space']) {
+                    pos.y += speed;
+                }
+                if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) {
+                    pos.y -= speed;
+                }
+            },
+            remove: function() {
+                window.removeEventListener('keydown', this.onKeyDown);
+                window.removeEventListener('keyup', this.onKeyUp);
             }
         });
 
@@ -1172,6 +1221,7 @@
         <!-- ==================== CAMERA RIG ==================== -->
         <a-entity id="rig" 
             movement-controls="fly: true; speed: 0.15"
+            fly-controls="speed: 0.15"
             position="0 0 145">
             <a-entity 
                 camera 
