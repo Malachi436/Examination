@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Virtual Villa Tour</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); display: flex; justify-content: center; align-items: center; font-family: Arial; font-size: 24px; z-index: 999; }
+        #instructions { position: fixed; bottom: 20px; left: 20px; font-family: Arial; font-size: 14px; color: #fff; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; z-index: 100; max-width: 300px; }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading Virtual World...</div>
+    <div id="instructions">
+        <b>Virtual Villa Controls:</b><br>
+        WASD - Move around<br>
+        Mouse - Look around<br>
+        Click to enable controls<br><br>
+        <b>Features:</b><br>
+        Explore the furnished house, swimming pool with animated water, garden with trees, playful dog, and parked car!
+    </div>
+
+    <!-- Custom A-Frame Components -->
+    <script>
+        // Pool water wave animation component
+        AFRAME.registerComponent('pool-water', {
+            schema: { 
+                speed: {default: 1.5}, 
+                amplitude: {default: 0.03} 
+            },
+            init: function() { 
+                this.initialY = this.el.object3D.position.y;
+            },
+            tick: function(time) {
+                var y = this.data.amplitude * Math.sin(time / 1000 * this.data.speed);
+                this.el.object3D.position.y = this.initialY + y;
+            }
+        });
+
+        // Slow spin component for ceiling fans or decorative elements
+        AFRAME.registerComponent('spin-slow', {
+            schema: {
+                speed: {default: 30}
+            },
+            tick: function(time, timeDelta) {
+                this.el.object3D.rotation.y += this.data.speed * timeDelta / 1000;
+            }
+        });
+
+        // Swaying animation for plants and trees
+        AFRAME.registerComponent('sway-animation', {
+            schema: {
+                speed: {default: 1},
+                amplitude: {default: 2}
+            },
+            init: function() {
+                this.initialRotation = this.el.object3D.rotation.z;
+            },
+            tick: function(time) {
+                var angle = this.data.amplitude * Math.sin(time / 1000 * this.data.speed);
+                this.el.object3D.rotation.z = this.initialRotation + angle * Math.PI / 180;
+            }
+        });
+
+        // Procedural cobblestone texture component
+        AFRAME.registerComponent('cobblestone-texture', {
+            init: function() {
+                var self = this;
+                var canvas = document.createElement('canvas');
+                canvas.width = 512;
+                canvas.height = 512;
+                var ctx = canvas.getContext('2d');
+
+                // Dark grout/mortar base
+                ctx.fillStyle = '#3a3632';
+                ctx.fillRect(0, 0, 512, 512);
+
+                var stoneColors = ['#8B8378', '#9C9085', '#7B7268', '#A09488', '#8E8275', '#938779', '#847B6F', '#9B8E82'];
+                var stoneW = 64;
+                var stoneH = 32;
+                var gap = 3;
+
+                for (var row = 0; row < 16; row++) {
+                    var offset = (row % 2) * (stoneW / 2);
+                    for (var col = -1; col < 9; col++) {
+                        var x = col * stoneW + offset;
+                        var y = row * stoneH;
+                        var idx = Math.abs((row * 9 + col * 7 + 3) % stoneColors.length);
+                        ctx.fillStyle = stoneColors[idx];
+                        self.roundRect(ctx, x + gap, y + gap, stoneW - gap*2, stoneH - gap*2, 5);
+                        ctx.fill();
+
+                        // Subtle highlight on top edge
+                        ctx.fillStyle = 'rgba(255,255,255,0.07)';
+                        self.roundRect(ctx, x + gap + 2, y + gap + 1, stoneW - gap*2 - 4, (stoneH - gap*2) / 3, 3);
+                        ctx.fill();
+
+                        // Subtle shadow on bottom edge
+                        ctx.fillStyle = 'rgba(0,0,0,0.09)';
+                        self.roundRect(ctx, x + gap + 2, y + stoneH - gap - 6, stoneW - gap*2 - 4, 5, 3);
+                        ctx.fill();
+                    }
+                }
+
+                this.texture = new THREE.CanvasTexture(canvas);
+                this.texture.wrapS = THREE.RepeatWrapping;
+                this.texture.wrapT = THREE.RepeatWrapping;
+                this.texture.repeat.set(3, 30);
+
+                if (this.el.getObject3D('mesh')) {
+                    this.applyTexture();
+                } else {
+                    this.el.addEventListener('object3dset', function() {
+                        self.applyTexture();
+                    });
+                }
+            },
+            roundRect: function(ctx, x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            },
+            applyTexture: function() {
+                var mesh = this.el.getObject3D('mesh');
+                if (mesh && mesh.material) {
+                    mesh.material.map = this.texture;
+                    mesh.material.needsUpdate = true;
+                }
+            }
+        });
+
+        // Driveway trees & lamp posts generator
+        AFRAME.registerComponent('driveway-trees', {
+            schema: {
+                startZ: {default: 14},
+                endZ: {default: 106},
+                spacing: {default: 8},
+                offsetX: {default: 7}
+            },
+            init: function() {
+                var d = this.data;
+                var index = 0;
+                for (var z = d.startZ; z <= d.endZ; z += d.spacing) {
+                    this.createCypressTree(-d.offsetX, z);
+                    this.createCypressTree(d.offsetX, z);
+                    // Decorative lamp posts every 3rd tree
+                    if (index % 3 === 0) {
+                        this.createLampPost(-d.offsetX + 2, z);
+                        this.createLampPost(d.offsetX - 2, z);
+                    }
+                    index++;
+                }
+            },
+            createCypressTree: function(x, z) {
+                var tree = document.createElement('a-entity');
+                tree.setAttribute('position', x + ' 0 ' + z);
+
+                // Trunk
+                var trunk = document.createElement('a-cylinder');
+                trunk.setAttribute('radius', '0.18');
+                trunk.setAttribute('height', '2');
+                trunk.setAttribute('color', '#4A3728');
+                trunk.setAttribute('position', '0 1 0');
+                trunk.setAttribute('shadow', 'cast: true');
+                tree.appendChild(trunk);
+
+                // Lower foliage layer
+                var foliage2 = document.createElement('a-cone');
+                foliage2.setAttribute('radius-bottom', '1.2');
+                foliage2.setAttribute('radius-top', '0.7');
+                foliage2.setAttribute('height', '2.5');
+                foliage2.setAttribute('color', '#16402A');
+                foliage2.setAttribute('position', '0 2.8 0');
+                foliage2.setAttribute('shadow', 'cast: true');
+                tree.appendChild(foliage2);
+
+                // Main tall cypress cone
+                var foliage1 = document.createElement('a-cone');
+                foliage1.setAttribute('radius-bottom', '1.0');
+                foliage1.setAttribute('radius-top', '0.08');
+                foliage1.setAttribute('height', '6');
+                foliage1.setAttribute('color', '#1B4D2E');
+                foliage1.setAttribute('position', '0 5 0');
+                foliage1.setAttribute('shadow', 'cast: true');
+                foliage1.setAttribute('sway-animation', 'speed: 0.2; amplitude: 0.3');
+                tree.appendChild(foliage1);
+
+                this.el.appendChild(tree);
+            },
+            createLampPost: function(x, z) {
+                var post = document.createElement('a-entity');
+                post.setAttribute('position', x + ' 0 ' + z);
+
+                // Iron pole
+                var pole = document.createElement('a-cylinder');
+                pole.setAttribute('radius', '0.06');
+                pole.setAttribute('height', '2.5');
+                pole.setAttribute('color', '#1a1a1a');
+                pole.setAttribute('position', '0 1.25 0');
+                pole.setAttribute('shadow', 'cast: true');
+                post.appendChild(pole);
+
+                // Lamp base cap
+                var cap = document.createElement('a-cylinder');
+                cap.setAttribute('radius', '0.18');
+                cap.setAttribute('height', '0.08');
+                cap.setAttribute('color', '#1a1a1a');
+                cap.setAttribute('position', '0 2.55 0');
+                post.appendChild(cap);
+
+                // Glowing lamp orb
+                var lamp = document.createElement('a-sphere');
+                lamp.setAttribute('radius', '0.15');
+                lamp.setAttribute('color', '#FFE4B5');
+                lamp.setAttribute('position', '0 2.75 0');
+                lamp.setAttribute('material', 'emissive: #FFE4B5; emissiveIntensity: 0.6; opacity: 0.9');
+                post.appendChild(lamp);
+
+                this.el.appendChild(post);
+            }
+        });
+
+        // Perimeter wall and hedges generator
+        AFRAME.registerComponent('perimeter-wall', {
+            schema: {
+                wallWidth: {default: 60},
+                wallDepth: {default: 117},
+                wallHeight: {default: 1.2},
+                wallThickness: {default: 0.5},
+                hedgeHeight: {default: 2.5},
+                hedgeWidth: {default: 0.8},
+                gateWidth: {default: 10},
+                centerX: {default: 0},
+                startZ: {default: -5},
+                endZ: {default: 112}
+            },
+            init: function() {
+                var d = this.data;
+                var halfW = d.wallWidth / 2;
+                var midZ = (d.startZ + d.endZ) / 2;
+                var wallY = d.wallHeight / 2;
+                var hedgeY = d.wallHeight + d.hedgeHeight / 2;
+                var halfGate = d.gateWidth / 2;
+                var frontLeftW = halfW - halfGate;
+
+                // Wall segment definitions: [posX, posZ, sizeW, sizeD]
+                var walls = [
+                    // Back wall (behind house)
+                    [d.centerX, d.startZ, d.wallWidth, d.wallThickness],
+                    // Left wall (west)
+                    [-halfW, midZ, d.wallThickness, d.wallDepth],
+                    // Right wall (east)
+                    [halfW, midZ, d.wallThickness, d.wallDepth],
+                    // Front-left wall (driveway side)
+                    [d.centerX - halfGate - frontLeftW / 2, d.endZ, frontLeftW, d.wallThickness],
+                    // Front-right wall (driveway side)
+                    [d.centerX + halfGate + frontLeftW / 2, d.endZ, frontLeftW, d.wallThickness]
+                ];
+
+                for (var i = 0; i < walls.length; i++) {
+                    var w = walls[i];
+                    this.createWallSegment(w[0], wallY, w[1], w[2], d.wallHeight, w[3]);
+                    // Stone cap on top of wall
+                    this.createWallCap(w[0], d.wallHeight, w[1], w[2] + 0.1, w[3] + 0.1);
+                    // Hedge on top
+                    this.createHedgeSegment(w[0], hedgeY, w[1], w[2] + 0.3, d.hedgeHeight, w[3] + 0.3);
+                }
+
+                // Corner pillars for a polished look
+                var corners = [
+                    [-halfW, d.startZ],
+                    [halfW, d.startZ],
+                    [-halfW, d.endZ],
+                    [halfW, d.endZ]
+                ];
+                for (var j = 0; j < corners.length; j++) {
+                    this.createCornerPillar(corners[j][0], corners[j][1]);
+                }
+            },
+            createWallSegment: function(x, y, z, w, h, depth) {
+                var wall = document.createElement('a-box');
+                wall.setAttribute('position', x + ' ' + y + ' ' + z);
+                wall.setAttribute('width', w);
+                wall.setAttribute('height', h);
+                wall.setAttribute('depth', depth);
+                wall.setAttribute('color', '#7B7268');
+                wall.setAttribute('shadow', 'cast: true; receive: true');
+                this.el.appendChild(wall);
+            },
+            createWallCap: function(x, y, z, w, depth) {
+                var cap = document.createElement('a-box');
+                cap.setAttribute('position', x + ' ' + (y + 0.08) + ' ' + z);
+                cap.setAttribute('width', w);
+                cap.setAttribute('height', '0.12');
+                cap.setAttribute('depth', depth);
+                cap.setAttribute('color', '#5C5248');
+                cap.setAttribute('shadow', 'cast: true');
+                this.el.appendChild(cap);
+            },
+            createHedgeSegment: function(x, y, z, w, h, depth) {
+                var hedge = document.createElement('a-box');
+                hedge.setAttribute('position', x + ' ' + y + ' ' + z);
+                hedge.setAttribute('width', w);
+                hedge.setAttribute('height', h);
+                hedge.setAttribute('depth', depth);
+                hedge.setAttribute('color', '#1B5E20');
+                hedge.setAttribute('shadow', 'cast: true; receive: true');
+                this.el.appendChild(hedge);
+            },
+            createCornerPillar: function(x, z) {
+                var pillar = document.createElement('a-entity');
+                pillar.setAttribute('position', x + ' 0 ' + z);
+
+                var base = document.createElement('a-box');
+                base.setAttribute('width', '1.0');
+                base.setAttribute('height', '1.5');
+                base.setAttribute('depth', '1.0');
+                base.setAttribute('color', '#6B6156');
+                base.setAttribute('position', '0 0.75 0');
+                base.setAttribute('shadow', 'cast: true');
+                pillar.appendChild(base);
+
+                var cap = document.createElement('a-box');
+                cap.setAttribute('width', '1.2');
+                cap.setAttribute('height', '0.15');
+                cap.setAttribute('depth', '1.2');
+                cap.setAttribute('color', '#5C5248');
+                cap.setAttribute('position', '0 1.58 0');
+                pillar.appendChild(cap);
+
+                var ball = document.createElement('a-sphere');
+                ball.setAttribute('radius', '0.25');
+                ball.setAttribute('color', '#5C5248');
+                ball.setAttribute('position', '0 1.95 0');
+                ball.setAttribute('shadow', 'cast: true');
+                pillar.appendChild(ball);
+
+                this.el.appendChild(pillar);
+            }
+        });
+
+        // Fountain water jet particles
+        AFRAME.registerComponent('fountain-jets', {
+            schema: {
+                count: {default: 8},
+                height: {default: 1.2},
+                radius: {default: 0.4},
+                speed: {default: 2}
+            },
+            init: function() {
+                this.particles = [];
+                var d = this.data;
+                for (var i = 0; i < d.count; i++) {
+                    var angle = (i / d.count) * Math.PI * 2;
+                    var p = document.createElement('a-sphere');
+                    p.setAttribute('radius', '0.06');
+                    p.setAttribute('color', '#87CEFA');
+                    p.setAttribute('material', 'opacity: 0.7; emissive: #4FC3F7; emissiveIntensity: 0.3');
+                    p.setAttribute('position', '0 0 0');
+                    this.el.appendChild(p);
+                    this.particles.push({
+                        el: p,
+                        angle: angle,
+                        phase: (i / d.count) * Math.PI * 2
+                    });
+                }
+            },
+            tick: function(time) {
+                var d = this.data;
+                var t = time / 1000 * d.speed;
+                for (var i = 0; i < this.particles.length; i++) {
+                    var p = this.particles[i];
+                    var progress = ((t + p.phase) % (Math.PI * 2)) / (Math.PI * 2);
+                    var x = Math.cos(p.angle) * d.radius * (1 + progress * 0.5);
+                    var z = Math.sin(p.angle) * d.radius * (1 + progress * 0.5);
+                    var y = d.height * Math.sin(progress * Math.PI);
+                    p.el.object3D.position.set(x, y, z);
+                    var scale = 1 - progress * 0.5;
+                    p.el.object3D.scale.set(scale, scale, scale);
+                }
+            }
+        });
+
+        // Dog patrol animation
+        AFRAME.registerComponent('dog-animation', {
+            schema: {
+                speed: {default: 3}
+            },
+            init: function() {
+                this.waypoints = [
+                    {x: 10, z: 15},
+                    {x: 10, z: 0},
+                    {x: -10, z: 0},
+                    {x: -10, z: 15}
+                ];
+                this.currentWP = 0;
+                this.progress = 0;
+                this.legs = [];
+            },
+            tick: function(time, delta) {
+                if (!delta) return;
+                var dt = delta / 1000;
+                var wp = this.waypoints;
+                var from = wp[this.currentWP];
+                var to = wp[(this.currentWP + 1) % wp.length];
+                var dx = to.x - from.x;
+                var dz = to.z - from.z;
+                var dist = Math.sqrt(dx * dx + dz * dz);
+                this.progress += (this.data.speed * dt) / dist;
+
+                if (this.progress >= 1) {
+                    this.progress = 0;
+                    this.currentWP = (this.currentWP + 1) % wp.length;
+                    from = wp[this.currentWP];
+                    to = wp[(this.currentWP + 1) % wp.length];
+                    dx = to.x - from.x;
+                    dz = to.z - from.z;
+                }
+
+                var px = from.x + dx * this.progress;
+                var pz = from.z + dz * this.progress;
+                this.el.object3D.position.set(px, 0, pz);
+
+                // Face direction of movement
+                var angle = Math.atan2(dx, dz);
+                this.el.object3D.rotation.y = angle;
+
+                // Bob up and down slightly
+                var bob = Math.sin(time / 150) * 0.03;
+                this.el.object3D.position.y = bob;
+            }
+        });
+
+        // Tail wagging
+        AFRAME.registerComponent('tail-wag', {
+            schema: { speed: {default: 8}, amplitude: {default: 30} },
+            init: function() { this.baseZ = 0; },
+            tick: function(time) {
+                var angle = this.data.amplitude * Math.sin(time / 1000 * this.data.speed);
+                this.el.object3D.rotation.z = angle * Math.PI / 180;
+            }
+        });
+
+        // Leg trot animation
+        AFRAME.registerComponent('leg-trot', {
+            schema: { speed: {default: 8}, amplitude: {default: 20}, offset: {default: 0} },
+            tick: function(time) {
+                var angle = this.data.amplitude * Math.sin(time / 1000 * this.data.speed + this.data.offset);
+                this.el.object3D.rotation.x = angle * Math.PI / 180;
+            }
+        });
+
+        // Procedural grass texture
+        AFRAME.registerComponent('grass-texture', {
+            init: function() {
+                var self = this;
+                var c = document.createElement('canvas');
+                c.width = 512; c.height = 512;
+                var ctx = c.getContext('2d');
+                // Base grass
+                ctx.fillStyle = '#3d8a2e';
+                ctx.fillRect(0, 0, 512, 512);
+                // Grass blade variations
+                var greens = ['#2d7a1e', '#4a9c35', '#357d28', '#5aad42', '#3b8830', '#48973a'];
+                for (var i = 0; i < 3000; i++) {
+                    ctx.fillStyle = greens[Math.floor(Math.random() * greens.length)];
+                    var gx = Math.random() * 512;
+                    var gy = Math.random() * 512;
+                    ctx.fillRect(gx, gy, 1 + Math.random() * 2, 3 + Math.random() * 6);
+                }
+                // Darker patches
+                for (var j = 0; j < 40; j++) {
+                    ctx.fillStyle = 'rgba(0,50,0,0.15)';
+                    ctx.beginPath();
+                    ctx.arc(Math.random()*512, Math.random()*512, 10+Math.random()*25, 0, Math.PI*2);
+                    ctx.fill();
+                }
+                var tex = new THREE.CanvasTexture(c);
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                tex.repeat.set(40, 40);
+                if (this.el.getObject3D('mesh')) { this.apply(tex); }
+                else { this.el.addEventListener('object3dset', function() { self.apply(tex); }); }
+            },
+            apply: function(tex) {
+                var m = this.el.getObject3D('mesh');
+                if (m && m.material) { m.material.map = tex; m.material.needsUpdate = true; }
+            }
+        });
+
+        // Floating cloud component
+        AFRAME.registerComponent('cloud-drift', {
+            schema: { speed: {default: 2}, range: {default: 200} },
+            init: function() { this.startX = this.el.object3D.position.x; },
+            tick: function(time) {
+                var x = this.startX + Math.sin(time / 1000 / this.data.speed * 0.3) * this.data.range;
+                this.el.object3D.position.x = x;
+            }
+        });
+
+        // Garden flower bed generator
+        AFRAME.registerComponent('flower-garden', {
+            schema: { count: {default: 30} },
+            init: function() {
+                var colors = ['#FF6B6B', '#FFD93D', '#C77DFF', '#FF85A1', '#FFA07A', '#87CEEB', '#FF69B4', '#FFAA33'];
+                for (var i = 0; i < this.data.count; i++) {
+                    var flower = document.createElement('a-entity');
+                    var fx = (Math.random() - 0.5) * 8;
+                    var fz = (Math.random() - 0.5) * 8;
+                    flower.setAttribute('position', fx + ' 0 ' + fz);
+                    // Stem
+                    var stem = document.createElement('a-cylinder');
+                    stem.setAttribute('radius', '0.03');
+                    stem.setAttribute('height', 0.3 + Math.random() * 0.3);
+                    stem.setAttribute('color', '#228B22');
+                    stem.setAttribute('position', '0 ' + (0.15 + Math.random()*0.15) + ' 0');
+                    flower.appendChild(stem);
+                    // Bloom
+                    var bloom = document.createElement('a-sphere');
+                    bloom.setAttribute('radius', 0.08 + Math.random() * 0.08);
+                    var col = colors[Math.floor(Math.random() * colors.length)];
+                    bloom.setAttribute('color', col);
+                    bloom.setAttribute('material', 'emissive: ' + col + '; emissiveIntensity: 0.15');
+                    bloom.setAttribute('position', '0 ' + (0.35 + Math.random()*0.25) + ' 0');
+                    flower.appendChild(bloom);
+                    this.el.appendChild(flower);
+                }
+            }
+        });
+
+        // Decorative bush generator
+        AFRAME.registerComponent('scatter-bushes', {
+            schema: { count: {default: 15}, spread: {default: 50} },
+            init: function() {
+                var bushColors = ['#1B5E20', '#2E7D32', '#1B4D2E', '#256D2B'];
+                for (var i = 0; i < this.data.count; i++) {
+                    var bx = (Math.random() - 0.5) * this.data.spread * 2;
+                    var bz = (Math.random() - 0.5) * this.data.spread;
+                    // Skip if too close to driveway
+                    if (Math.abs(bx) < 6 && bz > 0 && bz < 120) continue;
+                    var bush = document.createElement('a-sphere');
+                    var size = 0.8 + Math.random() * 1.5;
+                    bush.setAttribute('radius', size);
+                    bush.setAttribute('color', bushColors[Math.floor(Math.random() * bushColors.length)]);
+                    bush.setAttribute('position', bx + ' ' + (size * 0.6) + ' ' + bz);
+                    bush.setAttribute('scale', '1 ' + (0.6 + Math.random()*0.3) + ' 1');
+                    bush.setAttribute('shadow', 'cast: true');
+                    this.el.appendChild(bush);
+                }
+            }
+        });
+
+        // Butterfly particles
+        AFRAME.registerComponent('butterflies', {
+            schema: { count: {default: 12} },
+            init: function() {
+                this.bflies = [];
+                var colors = ['#FFD700', '#FF69B4', '#87CEEB', '#FFA500', '#E6E6FA', '#FF6347'];
+                for (var i = 0; i < this.data.count; i++) {
+                    var bf = document.createElement('a-entity');
+                    // Wing pair
+                    var lw = document.createElement('a-plane');
+                    var col = colors[Math.floor(Math.random() * colors.length)];
+                    lw.setAttribute('width', '0.15'); lw.setAttribute('height', '0.1');
+                    lw.setAttribute('color', col);
+                    lw.setAttribute('material', 'side: double; emissive: ' + col + '; emissiveIntensity: 0.3');
+                    lw.setAttribute('position', '-0.08 0 0');
+                    bf.appendChild(lw);
+                    var rw = document.createElement('a-plane');
+                    rw.setAttribute('width', '0.15'); rw.setAttribute('height', '0.1');
+                    rw.setAttribute('color', col);
+                    rw.setAttribute('material', 'side: double; emissive: ' + col + '; emissiveIntensity: 0.3');
+                    rw.setAttribute('position', '0.08 0 0');
+                    bf.appendChild(rw);
+                    this.el.appendChild(bf);
+                    this.bflies.push({
+                        el: bf, lw: lw, rw: rw,
+                        cx: (Math.random()-0.5)*30 + 15, cz: (Math.random()-0.5)*25 - 5,
+                        radius: 2 + Math.random()*5,
+                        speed: 0.5 + Math.random()*1.5,
+                        height: 1.5 + Math.random()*3,
+                        phase: Math.random() * Math.PI * 2
+                    });
+                }
+            },
+            tick: function(time) {
+                var t = time / 1000;
+                for (var i = 0; i < this.bflies.length; i++) {
+                    var b = this.bflies[i];
+                    var x = b.cx + Math.cos(t * b.speed + b.phase) * b.radius;
+                    var z = b.cz + Math.sin(t * b.speed + b.phase) * b.radius;
+                    var y = b.height + Math.sin(t * 2 + b.phase) * 0.5;
+                    b.el.object3D.position.set(x, y, z);
+                    b.el.object3D.rotation.y = t * b.speed + b.phase + Math.PI/2;
+                    // Wing flap
+                    var flap = Math.sin(t * 15 + b.phase) * 0.7;
+                    b.lw.object3D.rotation.y = flap;
+                    b.rw.object3D.rotation.y = -flap;
+                }
+            }
+        });
+
+        // Star field component - scatters tiny glowing spheres on the sky dome
+        AFRAME.registerComponent('star-field', {
+            schema: { count: {default: 200} },
+            init: function() {
+                for (var i = 0; i < this.data.count; i++) {
+                    var star = document.createElement('a-sphere');
+                    var theta = Math.random() * Math.PI * 2;
+                    var phi = Math.random() * Math.PI * 0.45 + 0.1;
+                    var r = 400;
+                    star.setAttribute('radius', 0.15 + Math.random() * 0.35);
+                    star.setAttribute('position', {
+                        x: r * Math.sin(phi) * Math.cos(theta),
+                        y: r * Math.cos(phi) + 30,
+                        z: r * Math.sin(phi) * Math.sin(theta)
+                    });
+                    var bright = 0.7 + Math.random() * 0.3;
+                    star.setAttribute('material', 'shader: flat; emissive: #ffffff; emissiveIntensity: ' + bright + '; color: #ffffff');
+                    this.el.appendChild(star);
+                }
+            }
+        });
+    </script>
+
+    <a-scene 
+        loading-screen="enabled: false"
+        renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true"
+        fog="type: linear; color: #FFD4A8; near: 150; far: 500"
+        
+        <!-- ==================== ASSETS ==================== -->
+        <a-assets timeout="30000">
+            <a-asset-item id="house" src="house_fully_furnished.glb"></a-asset-item>
+            <a-asset-item id="lambo" src="lamborghini_reventon.glb"></a-asset-item>
+            <a-asset-item id="mercedes" src="mercedes-benz_amg_gt-r_2017.glb"></a-asset-item>
+            <a-asset-item id="porsche" src="porsche_911_930_turbo_1975.glb"></a-asset-item>
+            <a-asset-item id="fountainModel" src="fountain.glb"></a-asset-item>
+            <a-asset-item id="hedgeModel" src="hedge.glb"></a-asset-item>
+            <a-asset-item id="grassCluster" src="grass_claster__downoad__like_please.glb"></a-asset-item>
+        </a-assets>
+
+        <!-- ==================== SKY & ENVIRONMENT (GOLDEN HOUR) ==================== -->
+        <!-- Warm evening sky -->
+        <a-sky color="#1a0a3e" material="shader: flat"></a-sky>
+        <!-- Warm sunset horizon band -->
+        <a-cylinder radius="500" height="80" position="0 -15 0" open-ended="true"
+                    material="color: #FF6B35; shader: flat; side: back; opacity: 0.7"></a-cylinder>
+        <!-- Second horizon layer (pink-purple transition) -->
+        <a-cylinder radius="498" height="50" position="0 15 0" open-ended="true"
+                    material="color: #C75B7A; shader: flat; side: back; opacity: 0.35"></a-cylinder>
+
+        <!-- ==================== SUNSET CLOUDS ==================== -->
+        <!-- Cloud cluster 1 - pink/orange lit from below -->
+        <a-entity position="-80 45 -100" cloud-drift="speed: 3; range: 40">
+            <a-sphere radius="12" color="#E87461" position="0 0 0" material="opacity: 0.75; shader: flat"></a-sphere>
+            <a-sphere radius="9" color="#D4614E" position="15 -2 3" material="opacity: 0.7; shader: flat"></a-sphere>
+            <a-sphere radius="10" color="#E88D6D" position="-12 -1 -2" material="opacity: 0.72; shader: flat"></a-sphere>
+            <a-sphere radius="7" color="#D4614E" position="8 3 5" material="opacity: 0.65; shader: flat"></a-sphere>
+        </a-entity>
+        <!-- Cloud cluster 2 -->
+        <a-entity position="60 55 -150" cloud-drift="speed: 5; range: 60">
+            <a-sphere radius="14" color="#E87461" position="0 0 0" material="opacity: 0.7; shader: flat"></a-sphere>
+            <a-sphere radius="10" color="#D4614E" position="18 2 4" material="opacity: 0.65; shader: flat"></a-sphere>
+            <a-sphere radius="11" color="#E88D6D" position="-14 1 -3" material="opacity: 0.68; shader: flat"></a-sphere>
+        </a-entity>
+        <!-- Cloud cluster 3 -->
+        <a-entity position="20 50 50" cloud-drift="speed: 4; range: 50">
+            <a-sphere radius="10" color="#D4614E" position="0 0 0" material="opacity: 0.72; shader: flat"></a-sphere>
+            <a-sphere radius="8" color="#E87461" position="12 -1 2" material="opacity: 0.68; shader: flat"></a-sphere>
+            <a-sphere radius="9" color="#C75B7A" position="-10 2 -4" material="opacity: 0.65; shader: flat"></a-sphere>
+        </a-entity>
+        <!-- Cloud cluster 4 -->
+        <a-entity position="-40 48 100" cloud-drift="speed: 6; range: 35">
+            <a-sphere radius="11" color="#E88D6D" position="0 0 0" material="opacity: 0.7; shader: flat"></a-sphere>
+            <a-sphere radius="8" color="#D4614E" position="-13 1 3" material="opacity: 0.65; shader: flat"></a-sphere>
+        </a-entity>
+
+        <!-- ==================== SETTING SUN ==================== -->
+        <!-- Large warm setting sun on horizon -->
+        <a-sphere radius="15" color="#FF8C42" position="100 15 -200"
+                  material="shader: flat; emissive: #FF8C42; emissiveIntensity: 1"></a-sphere>
+        <!-- Sun outer glow -->
+        <a-sphere radius="30" color="#FF6B35" position="100 15 -200"
+                  material="shader: flat; opacity: 0.2; emissive: #FF6B35; emissiveIntensity: 0.5"></a-sphere>
+        <!-- Sun haze -->
+        <a-sphere radius="50" color="#FFB347" position="100 15 -200"
+                  material="shader: flat; opacity: 0.08; emissive: #FFB347; emissiveIntensity: 0.3"></a-sphere>
+
+        <!-- ==================== MAIN LIGHTING (GOLDEN HOUR) ==================== -->
+        <!-- Sunset directional - warm orange from low angle -->
+        <a-entity light="type: directional; color: #FFB347; intensity: 0.8; castShadow: true" position="100 15 -200"></a-entity>
+        <!-- Warm ambient fill -->
+        <a-entity light="type: ambient; color: #FFE4B5; intensity: 0.35"></a-entity>
+        <!-- Golden hour hemisphere -->
+        <a-entity light="type: hemisphere; color: #FF9966; groundColor: #8B7355; intensity: 0.4"></a-entity>
+
+        <!-- ==================== WARM ESTATE SPOTLIGHTS ==================== -->
+        <!-- House front - warm golden wash -->
+        <a-entity light="type: spot; color: #FFD180; intensity: 1.5; distance: 30; angle: 60; penumbra: 0.6; decay: 1.5; castShadow: true"
+                  position="0 10 14" rotation="-60 0 0"></a-entity>
+        <!-- House back -->
+        <a-entity light="type: spot; color: #FFD180; intensity: 1.0; distance: 25; angle: 55; penumbra: 0.6; decay: 1.5"
+                  position="0 10 -14" rotation="60 0 0"></a-entity>
+        <!-- House left side -->
+        <a-entity light="type: spot; color: #FFCC80; intensity: 0.8; distance: 25; angle: 50; penumbra: 0.7; decay: 1.5"
+                  position="-14 10 0" rotation="0 0 60"></a-entity>
+        <!-- House right side -->
+        <a-entity light="type: spot; color: #FFCC80; intensity: 0.8; distance: 25; angle: 50; penumbra: 0.7; decay: 1.5"
+                  position="14 10 0" rotation="0 0 -60"></a-entity>
+
+        <!-- Fountain warm uplight -->
+        <a-entity light="type: point; color: #FFB74D; intensity: 1.0; distance: 20; decay: 1.5" position="0 1 8"></a-entity>
+
+        <!-- Car showroom accent lights -->
+        <a-entity light="type: point; color: #FFE0B2; intensity: 0.6; distance: 8; decay: 2" position="-10 0.3 5"></a-entity>
+        <a-entity light="type: point; color: #FFE0B2; intensity: 0.6; distance: 8; decay: 2" position="10 0.3 5"></a-entity>
+        <a-entity light="type: point; color: #FFE0B2; intensity: 0.6; distance: 8; decay: 2" position="-12 0.3 10"></a-entity>
+
+        <!-- Gate entrance warm glow -->
+        <a-entity light="type: spot; color: #FFD180; intensity: 1.5; distance: 15; angle: 40; penumbra: 0.5; decay: 1.5"
+                  position="-5 0.2 15" rotation="-90 0 0"></a-entity>
+        <a-entity light="type: spot; color: #FFD180; intensity: 1.5; distance: 15; angle: 40; penumbra: 0.5; decay: 1.5"
+                  position="5 0.2 15" rotation="-90 0 0"></a-entity>
+
+        <!-- ==================== GROUND ==================== -->
+        <a-plane 
+            grass-texture
+            position="0 0 0" 
+            rotation="-90 0 0" 
+            width="500" 
+            height="500" 
+            shadow="receive: true">
+        </a-plane>
+
+        <!-- ==================== HOUSE ==================== -->
+        <a-entity id="houseModel"
+            gltf-model="#house" 
+            scale="0.03 0.03 0.03"
+            position="0 0 0"
+            shadow="cast: true; receive: true">
+        </a-entity>
+
+        <!-- ==================== COBBLESTONE ROUNDABOUT ==================== -->
+        <!-- Circular cobblestone area at end of driveway -->
+        <a-circle 
+            cobblestone-texture
+            radius="14"
+            position="0 0.025 8"
+            rotation="-90 0 0"
+            shadow="receive: true">
+        </a-circle>
+        <!-- Roundabout curb ring -->
+        <a-torus radius="14" radius-tubular="0.15" rotation="90 0 0" position="0 0.15 8"
+                 color="#6B6156" shadow="cast: true"></a-torus>
+
+        <!-- ==================== FOUNTAIN (GLB Model) ==================== -->
+        <a-entity id="fountain"
+            gltf-model="#fountainModel"
+            position="0 0 8"
+            scale="2 2 2"
+            shadow="cast: true; receive: true"></a-entity>
+        <!-- Fountain water surface -->
+        <a-circle radius="2.5" rotation="-90 0 0" position="0 0.15 8"
+                  color="#1E90FF" pool-water="speed: 1.5; amplitude: 0.01"
+                  material="opacity: 0.55; emissive: #1565C0; emissiveIntensity: 0.2; side: double"></a-circle>
+        <!-- Fountain ambient water glow -->
+        <a-entity light="type: point; color: #4FC3F7; intensity: 0.4; distance: 12; decay: 2" position="0 0.5 8"></a-entity>
+
+        <!-- ==================== COBBLESTONE DRIVEWAY ==================== -->
+        <!-- Main cobblestone surface -->
+        <a-plane 
+            cobblestone-texture
+            position="0 0.03 72.5" 
+            rotation="-90 0 0" 
+            width="8" 
+            height="125"
+            shadow="receive: true">
+        </a-plane>
+
+        <!-- Driveway center line accent -->
+        <a-plane 
+            position="0 0.04 72.5"
+            rotation="-90 0 0"
+            width="0.12"
+            height="125"
+            color="#5C5248"
+            shadow="receive: true">
+        </a-plane>
+
+        <!-- Stone curb - left -->
+        <a-box position="-4.15 0.15 72.5" width="0.35" height="0.28" depth="125" color="#6B6156" shadow="cast: true; receive: true"></a-box>
+        <!-- Stone curb - right -->
+        <a-box position="4.15 0.15 72.5" width="0.35" height="0.28" depth="125" color="#6B6156" shadow="cast: true; receive: true"></a-box>
+
+        <!-- ==================== ENTRANCE GATE PILLARS ==================== -->
+        <!-- Left entrance pillar -->
+        <a-entity position="-4.8 0 112">
+            <a-box width="1.3" height="3.2" depth="1.3" color="#8B8378" position="0 1.6 0" shadow="cast: true"></a-box>
+            <a-box width="1.6" height="0.25" depth="1.6" color="#6B6156" position="0 3.35 0" shadow="cast: true"></a-box>
+            <a-sphere radius="0.35" color="#6B6156" position="0 3.8 0" shadow="cast: true"></a-sphere>
+        </a-entity>
+        <!-- Right entrance pillar -->
+        <a-entity position="4.8 0 112">
+            <a-box width="1.3" height="3.2" depth="1.3" color="#8B8378" position="0 1.6 0" shadow="cast: true"></a-box>
+            <a-box width="1.6" height="0.25" depth="1.6" color="#6B6156" position="0 3.35 0" shadow="cast: true"></a-box>
+            <a-sphere radius="0.35" color="#6B6156" position="0 3.8 0" shadow="cast: true"></a-sphere>
+        </a-entity>
+
+        <!-- ==================== WROUGHT-IRON GATE WITH "AM" ==================== -->
+        <a-entity id="entranceGate" position="0 0 112">
+            <!-- Gate frame - top rail -->
+            <a-box width="9" height="0.2" depth="0.12" color="#1a1a1a" position="0 3.0 0" shadow="cast: true"
+                   material="metalness: 0.9; roughness: 0.3; color: #1a1a1a"></a-box>
+            <!-- Gate frame - bottom rail -->
+            <a-box width="9" height="0.15" depth="0.12" color="#1a1a1a" position="0 0.08 0" shadow="cast: true"
+                   material="metalness: 0.9; roughness: 0.3; color: #1a1a1a"></a-box>
+            <!-- Gate frame - middle rail -->
+            <a-box width="9" height="0.1" depth="0.1" color="#2a2a2a" position="0 1.5 0" shadow="cast: true"
+                   material="metalness: 0.9; roughness: 0.3; color: #2a2a2a"></a-box>
+
+            <!-- Vertical bars - left side -->
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="-4.0 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="-3.2 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="-2.4 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="-1.6 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="-0.8 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+
+            <!-- Vertical bars - right side -->
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="0.8 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="1.6 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="2.4 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="3.2 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+            <a-cylinder radius="0.04" height="2.85" color="#1a1a1a" position="4.0 1.55 0" shadow="cast: true"
+                        material="metalness: 0.9; roughness: 0.3"></a-cylinder>
+
+            <!-- Bar finials (spear tips on top of each bar) -->
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="-4.0 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="-3.2 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="-2.4 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="-1.6 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="-0.8 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="0.8 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="1.6 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="2.4 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="3.2 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+            <a-cone radius-bottom="0.06" radius-top="0" height="0.18" color="#B8860B" position="4.0 3.1 0" material="metalness: 0.8; roughness: 0.2; color: #B8860B"></a-cone>
+
+            <!-- Decorative arch over the gate -->
+            <a-torus arc="180" radius="2.2" radius-tubular="0.05" rotation="0 0 0" position="0 3.0 0"
+                     color="#1a1a1a" material="metalness: 0.9; roughness: 0.3; color: #1a1a1a; side: double"
+                     shadow="cast: true"></a-torus>
+            <!-- Inner decorative arch -->
+            <a-torus arc="180" radius="1.6" radius-tubular="0.03" rotation="0 0 0" position="0 3.0 0"
+                     color="#2a2a2a" material="metalness: 0.9; roughness: 0.3; color: #2a2a2a; side: double"
+                     shadow="cast: true"></a-torus>
+
+            <!-- "AM" Initials - Gold embossed text -->
+            <a-entity position="0 2.0 0.1">
+                <a-text value="AM" align="center" width="8" color="#B8860B"
+                        font="mozillavr" anchor="center" baseline="center"
+                        material="opacity: 1"></a-text>
+            </a-entity>
+            <!-- "AM" text back side -->
+            <a-entity position="0 2.0 -0.1" rotation="0 180 0">
+                <a-text value="AM" align="center" width="8" color="#B8860B"
+                        font="mozillavr" anchor="center" baseline="center"
+                        material="opacity: 1"></a-text>
+            </a-entity>
+
+            <!-- Decorative scrollwork elements -->
+            <a-torus arc="180" radius="0.5" radius-tubular="0.025" rotation="0 0 90" position="-1.2 2.3 0"
+                     color="#B8860B" material="metalness: 0.8; roughness: 0.2; color: #B8860B; side: double"></a-torus>
+            <a-torus arc="180" radius="0.5" radius-tubular="0.025" rotation="0 0 -90" position="1.2 2.3 0"
+                     color="#B8860B" material="metalness: 0.8; roughness: 0.2; color: #B8860B; side: double"></a-torus>
+        </a-entity>
+
+        <!-- ==================== DRIVEWAY TREES & LAMPS ==================== -->
+        <a-entity id="drivewayTrees" driveway-trees="startZ: 14; endZ: 128; spacing: 8; offsetX: 7"></a-entity>
+
+        <!-- ==================== GARDEN & LANDSCAPING ==================== -->
+
+        <!-- ==================== FLOWER POTS (hidden for now) ==================== -->
+
+        <!-- ==================== GLB HEDGE PERIMETER ==================== -->
+        <!-- Right wall hedges (x=70, z from -60 to 15) -->
+        <a-entity gltf-model="#hedgeModel" position="70 0 -57" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -51" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -45" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -39" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -33" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -27" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -21" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -15" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -9" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 -3" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 3" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 9" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="70 0 15" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+
+        <!-- Left wall hedges (x=-70, z from -60 to 15) -->
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -57" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -51" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -45" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -39" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -33" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -27" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -21" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -15" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -9" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 -3" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 3" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 9" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-70 0 15" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+
+        <!-- Back wall hedges (z=-60, x from -70 to 70) -->
+        <a-entity gltf-model="#hedgeModel" position="-66 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-60 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-54 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-48 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-42 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-36 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-30 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-24 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-18 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-12 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-6 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="0 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="6 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="12 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="18 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="24 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="30 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="36 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="42 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="48 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="54 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="60 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="66 0 -60" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+
+        <!-- Front-left wall hedges (z=15, x from -70 to -8, leaving gate opening) -->
+        <a-entity gltf-model="#hedgeModel" position="-66 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-60 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-54 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-48 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-42 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-36 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-30 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-24 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-18 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="-12 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+
+        <!-- Front-right wall hedges (z=15, x from 8 to 70, leaving gate opening) -->
+        <a-entity gltf-model="#hedgeModel" position="12 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="18 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="24 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="30 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="36 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="42 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="48 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="54 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="60 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+        <a-entity gltf-model="#hedgeModel" position="66 0 15" rotation="0 90 0" scale="0.08 0.08 0.08" shadow="cast: true"></a-entity>
+
+        <!-- ==================== PATH LIGHTS ==================== -->
+        <a-entity id="pathLights">
+            <!-- Warm garden lanterns along the driveway approach -->
+            <a-entity position="-5.5 0 25">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+                <a-entity light="type: point; color: #FFD180; intensity: 1.2; distance: 20; decay: 2" position="0 1.95 0"></a-entity>
+            </a-entity>
+            <a-entity position="5.5 0 25">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+                <a-entity light="type: point; color: #FFD180; intensity: 1.2; distance: 20; decay: 2" position="0 1.95 0"></a-entity>
+            </a-entity>
+            <a-entity position="-5.5 0 55">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+            </a-entity>
+            <a-entity position="5.5 0 55">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+            </a-entity>
+            <a-entity position="-5.5 0 85">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+            </a-entity>
+            <a-entity position="5.5 0 85">
+                <a-cylinder radius="0.08" height="1.8" color="#2C2C2C" position="0 0.9 0"></a-cylinder>
+                <a-box width="0.3" height="0.35" depth="0.3" color="#333" position="0 1.9 0"></a-box>
+                <a-sphere radius="0.12" color="#FFD700" position="0 1.95 0" material="emissive: #FFD700; emissiveIntensity: 1.5"></a-sphere>
+            </a-entity>
+        </a-entity>
+
+        <!-- ==================== PORCH LIGHTS (hidden for now) ==================== -->
+
+        <!-- ==================== DOG / PET ==================== -->
+        <a-entity id="dog" dog-animation="speed: 3" position="8 0 5">
+            <!-- Body -->
+            <a-box width="1.2" height="0.55" depth="0.5" color="#8B6914" position="0 0.55 0"
+                   shadow="cast: true" material="roughness: 0.9"></a-box>
+
+            <!-- Head -->
+            <a-entity position="0.65 0.75 0">
+                <a-box width="0.45" height="0.4" depth="0.4" color="#8B6914"
+                       material="roughness: 0.9"></a-box>
+                <!-- Snout -->
+                <a-box width="0.25" height="0.18" depth="0.28" color="#A0522D" position="0.18 -0.08 0"></a-box>
+                <!-- Nose -->
+                <a-sphere radius="0.04" color="#111" position="0.3 -0.04 0"></a-sphere>
+                <!-- Left eye -->
+                <a-sphere radius="0.04" color="#111" position="0.15 0.06 -0.14"></a-sphere>
+                <!-- Right eye -->
+                <a-sphere radius="0.04" color="#111" position="0.15 0.06 0.14"></a-sphere>
+                <!-- Left ear -->
+                <a-box width="0.1" height="0.18" depth="0.1" color="#6B4226"
+                       position="-0.05 0.25 -0.15" rotation="0 0 -15"></a-box>
+                <!-- Right ear -->
+                <a-box width="0.1" height="0.18" depth="0.1" color="#6B4226"
+                       position="-0.05 0.25 0.15" rotation="0 0 15"></a-box>
+            </a-entity>
+
+            <!-- Front-left leg -->
+            <a-cylinder radius="0.06" height="0.4" color="#8B6914"
+                        position="0.4 0.2 -0.18" leg-trot="speed: 8; amplitude: 20; offset: 0"></a-cylinder>
+            <!-- Front-right leg -->
+            <a-cylinder radius="0.06" height="0.4" color="#8B6914"
+                        position="0.4 0.2 0.18" leg-trot="speed: 8; amplitude: 20; offset: 3.14"></a-cylinder>
+            <!-- Back-left leg -->
+            <a-cylinder radius="0.06" height="0.4" color="#8B6914"
+                        position="-0.4 0.2 -0.18" leg-trot="speed: 8; amplitude: 20; offset: 3.14"></a-cylinder>
+            <!-- Back-right leg -->
+            <a-cylinder radius="0.06" height="0.4" color="#8B6914"
+                        position="-0.4 0.2 0.18" leg-trot="speed: 8; amplitude: 20; offset: 0"></a-cylinder>
+
+            <!-- Tail -->
+            <a-cylinder radius="0.04" height="0.4" color="#8B6914"
+                        position="-0.7 0.7 0" rotation="-45 0 0"
+                        tail-wag="speed: 10; amplitude: 35"></a-cylinder>
+        </a-entity>
+
+        <!-- ==================== CARS AROUND ROUNDABOUT ==================== -->
+        <!-- Lamborghini Reventon - front-left of fountain -->
+        <a-entity id="lamborghini"
+            gltf-model="#lambo"
+            position="-10 0 5"
+            rotation="0 120 0"
+            scale="2 2 2"
+            shadow="cast: true; receive: true"></a-entity>
+
+        <!-- Mercedes-Benz AMG GT-R - front-right of fountain -->
+        <a-entity id="mercedesAMG"
+            gltf-model="#mercedes"
+            position="10 0.5 5"
+            rotation="0 -120 0"
+            scale="2 2 2"
+            shadow="cast: true; receive: true"></a-entity>
+
+        <!-- Porsche 911 Turbo - left of fountain -->
+        <a-entity id="porsche911"
+            gltf-model="#porsche"
+            position="-12 0.5 10"
+            rotation="0 45 0"
+            scale="2.5 2.5 2.5"
+            shadow="cast: true; receive: true"></a-entity>
+
+        <!-- ==================== SWIMMING POOL ==================== -->
+        <a-entity id="swimmingPool" position="-20 0 -20">
+            <!-- Pool surround / deck -->
+            <a-box width="14" height="0.15" depth="8" color="#D2B48C" position="0 0.08 0"
+                   shadow="receive: true" material="roughness: 0.6"></a-box>
+            <!-- Pool basin -->
+            <a-box width="12" height="1.5" depth="6" color="#1565C0" position="0 -0.6 0"
+                   shadow="receive: true"></a-box>
+            <!-- Pool water surface -->
+            <a-plane rotation="-90 0 0" width="12" height="6" position="0 0.1 0"
+                     color="#1E90FF" pool-water="speed: 1; amplitude: 0.02"
+                     material="opacity: 0.65; emissive: #1565C0; emissiveIntensity: 0.2; side: double"></a-plane>
+            <!-- Pool edge trim -->
+            <a-box width="12.4" height="0.2" depth="0.3" color="#8B8378" position="0 0.2 -3.1" shadow="cast: true"></a-box>
+            <a-box width="12.4" height="0.2" depth="0.3" color="#8B8378" position="0 0.2 3.1" shadow="cast: true"></a-box>
+            <a-box width="0.3" height="0.2" depth="6.5" color="#8B8378" position="-6.1 0.2 0" shadow="cast: true"></a-box>
+            <a-box width="0.3" height="0.2" depth="6.5" color="#8B8378" position="6.1 0.2 0" shadow="cast: true"></a-box>
+            <!-- Pool ambient glow -->
+            <a-entity light="type: point; color: #4FC3F7; intensity: 0.4; distance: 15; decay: 2" position="0 -0.3 0"></a-entity>
+        </a-entity>
+
+        <!-- ==================== FLOWER BEDS ==================== -->
+        <!-- Flower beds around roundabout -->
+        <a-entity flower-garden="count: 30" position="10 0 0"></a-entity>
+        <a-entity flower-garden="count: 30" position="-10 0 0"></a-entity>
+        <a-entity flower-garden="count: 25" position="12 0 15"></a-entity>
+        <a-entity flower-garden="count: 25" position="-12 0 15"></a-entity>
+        <!-- Flower bed near pool -->
+        <a-entity flower-garden="count: 20" position="-25 0 -14"></a-entity>
+
+        <!-- ==================== GRASS CLUSTERS ==================== -->
+        <!-- Large quadrant of grass across the right side of the compound -->
+        <!-- Row 1 (z = -5) -->
+        <a-entity gltf-model="#grassCluster" position="20 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="28 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="36 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="44 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="52 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="60 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <!-- Row 2 (z = -15) -->
+        <a-entity gltf-model="#grassCluster" position="20 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="28 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="36 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="44 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="52 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="60 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <!-- Row 3 (z = -25) -->
+        <a-entity gltf-model="#grassCluster" position="20 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="28 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="36 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="44 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="52 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="60 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <!-- Row 4 (z = -35) -->
+        <a-entity gltf-model="#grassCluster" position="20 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="28 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="36 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="44 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="52 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="60 0 -35" scale="0.5 0.5 0.5"></a-entity>
+        <!-- Row 5 (z = -45) -->
+        <a-entity gltf-model="#grassCluster" position="20 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="28 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="36 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="44 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="52 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="60 0 -45" scale="0.5 0.5 0.5"></a-entity>
+        <!-- Left quadrant scatter -->
+        <a-entity gltf-model="#grassCluster" position="-20 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-30 0 -10" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-40 0 -5" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-50 0 -15" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-35 0 -30" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-45 0 -40" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-55 0 -25" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity gltf-model="#grassCluster" position="-25 0 -45" scale="0.5 0.5 0.5"></a-entity>
+
+        <!-- ==================== BUTTERFLIES ==================== -->
+        <a-entity butterflies="count: 15" position="0 0 0"></a-entity>
+
+        <!-- ==================== CAMERA RIG ==================== -->
+        <a-entity id="rig" 
+            movement-controls="fly: false; speed: 0.3"
+            position="0 0 145">
+            <a-entity 
+                camera 
+                look-controls="pointerLockEnabled: true"
+                position="0 1.6 0">
+            </a-entity>
+        </a-entity>
+
+    </a-scene>
+
+    <script>
+        // Hide loading screen when scene is ready
+        document.querySelector('a-scene').addEventListener('loaded', function () {
+            setTimeout(() => {
+                document.getElementById('loading').style.display = 'none';
+            }, 500);
+        });
+
+        // Center house on ground after model loads
+        document.querySelector('#houseModel').addEventListener('model-loaded', function(e) {
+            const model = this.getObject3D('mesh');
+            if (model) {
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                
+                // Adjust position to center and ground the model
+                this.setAttribute('position', {
+                    x: -center.x * 0.03,
+                    y: -box.min.y * 0.03,
+                    z: -center.z * 0.03
+                });
+            }
+        });
+    </script>
+</body>
+</html>
