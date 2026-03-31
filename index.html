@@ -51,53 +51,6 @@
             }
         });
 
-        // Fly controls for vertical movement (Space=up, Shift=down)
-        AFRAME.registerComponent('fly-controls', {
-            schema: {
-                speed: {default: 0.15}
-            },
-            init: function() {
-                this.keys = {};
-                this.bindFunctions();
-            },
-            bindFunctions: function() {
-                this.onKeyDown = this.onKeyDown.bind(this);
-                this.onKeyUp = this.onKeyUp.bind(this);
-            },
-            update: function() {
-                if (this.data.enabled) {
-                    window.addEventListener('keydown', this.onKeyDown);
-                    window.addEventListener('keyup', this.onKeyUp);
-                } else {
-                    window.removeEventListener('keydown', this.onKeyDown);
-                    window.removeEventListener('keyup', this.onKeyUp);
-                }
-            },
-            onKeyDown: function(e) {
-                this.keys[e.code] = true;
-            },
-            onKeyUp: function(e) {
-                this.keys[e.code] = false;
-            },
-            tick: function(time, delta) {
-                if (!delta) return;
-                var rig = this.el;
-                var pos = rig.object3D.position;
-                var speed = this.data.speed * delta / 1000;
-
-                if (this.keys['Space']) {
-                    pos.y += speed;
-                }
-                if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) {
-                    pos.y -= speed;
-                }
-            },
-            remove: function() {
-                window.removeEventListener('keydown', this.onKeyDown);
-                window.removeEventListener('keyup', this.onKeyUp);
-            }
-        });
-
         // Swaying animation for plants and trees
         AFRAME.registerComponent('sway-animation', {
             schema: {
@@ -1221,7 +1174,6 @@
         <!-- ==================== CAMERA RIG ==================== -->
         <a-entity id="rig" 
             movement-controls="fly: true; speed: 0.15"
-            fly-controls="speed: 0.15"
             position="0 0 145">
             <a-entity 
                 camera 
@@ -1233,6 +1185,21 @@
     </a-scene>
 
     <script>
+        // Global fly controls for Space/Shift
+        document.addEventListener('keydown', function(e) {
+            var rig = document.querySelector('#rig');
+            if (!rig) return;
+            var pos = rig.object3D.position;
+            if (e.code === 'Space') {
+                e.preventDefault();
+                pos.y += 0.05;
+            }
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                e.preventDefault();
+                pos.y -= 0.05;
+            }
+        });
+
         // Hide loading screen when scene is ready
         document.querySelector('a-scene').addEventListener('loaded', function () {
             setTimeout(() => {
