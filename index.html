@@ -26,18 +26,33 @@
 
     <!-- Custom A-Frame Components -->
     <script>
-        // Pool water wave animation component
+        // Pool water wave animation component - enhanced with realistic wave motion
         AFRAME.registerComponent('pool-water', {
             schema: { 
-                speed: {default: 1.5}, 
-                amplitude: {default: 0.03} 
+                speed: {default: 1}, 
+                amplitude: {default: 0.03}
             },
             init: function() { 
-                this.initialY = this.el.object3D.position.y;
+                this.initialPos = this.el.object3D.position.clone();
+                this.material = this.el.getAttribute('material');
             },
             tick: function(time) {
-                var y = this.data.amplitude * Math.sin(time / 1000 * this.data.speed);
-                this.el.object3D.position.y = this.initialY + y;
+                var t = time / 1000 * this.data.speed;
+                var amp = this.data.amplitude;
+                
+                // Multi-directional wave motion
+                var y = Math.sin(t * 2) * amp;
+                var x = Math.sin(t * 1.5) * amp * 0.5;
+                var z = Math.cos(t * 1.8) * amp * 0.5;
+                
+                // Apply position with wave motion
+                this.el.object3D.position.x = this.initialPos.x + x;
+                this.el.object3D.position.y = this.initialPos.y + y;
+                this.el.object3D.position.z = this.initialPos.z + z;
+                
+                // Subtle rotation wobble for more realism
+                this.el.object3D.rotation.x = Math.sin(t * 0.8) * 0.01;
+                this.el.object3D.rotation.z = Math.cos(t * 1.2) * 0.01;
             }
         });
 
